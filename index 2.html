@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1220"><title>BTC Momentum Scanner V3.1</title>
+<style>
+*{box-sizing:border-box}body{font:16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0b1220;color:#f1f5f9;margin:0 auto;padding:18px;max-width:680px}h1{font-size:26px;margin:9px 0}.muted,small{color:#a8b7cc}.card{background:#172235;border:1px solid #34455c;border-radius:18px;padding:19px;margin:15px 0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:15px 0}.row>span:first-child{min-width:0}.value{font-weight:700;text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.big{font-size:38px;font-weight:800;letter-spacing:-1px}.signal{font-size:30px;font-weight:800}.up{color:#4ade80}.down{color:#fb7185}.wait{color:#fbbf24}.badge{background:#334155;padding:6px 10px;border-radius:9px;font-size:12px}.bar{height:9px;border-radius:10px;background:#334155;overflow:hidden}.bar>div{height:100%;background:#60a5fa;width:0}.section{font-weight:800;font-size:18px;margin-bottom:15px}button{width:100%;background:#2563eb;border:0;border-radius:12px;padding:15px;color:#fff;font-size:17px;font-weight:700}hr{border:0;border-top:1px solid #334155;margin:18px 0}p,small{line-height:1.5}#error{color:#fda4af;white-space:pre-wrap}#status{max-width:52%;text-align:center}#reason{color:#b8c7da}small{display:block;margin:18px 0}.notice{font-size:13px;color:#cbd5e1;border-left:3px solid #64748b;padding-left:12px}
+</style></head><body>
+<h1>₿ BTC Momentum <span class="badge">V3.1</span></h1><div class="muted">Kalshi 15-minute companion · checks every 15 seconds while open</div>
+<div class="card"><div class="row"><span class="muted">BTC/USD · latest completed 1m candle</span><span class="badge" id="status">Connecting…</span></div><div class="big" id="price">—</div><div class="row"><span>Momentum</span><span id="signal" class="signal wait">WAIT</span></div><div class="row"><span>Heuristic strength</span><span id="strength" class="value">—</span></div><div class="bar"><div id="strengthbar"></div></div><p id="reason">Waiting for verified, fresh data.</p></div>
+<div class="card"><div class="section">Kalshi scalp readiness</div><div class="row"><span>Momentum setup</span><span class="value wait" id="readiness">WAIT</span></div><p id="scalpreason" class="muted">No setup without fresh data.</p><p class="notice">Readiness reflects BTC momentum only. It does not know the Kalshi strike, contract price, fees or order book. It is NOT a trade recommendation or an estimated edge.</p></div>
+<div class="card"><div class="section">Momentum &amp; confirmation</div><div class="row"><span>1-minute change</span><span id="m1" class="value">—</span></div><div class="row"><span>3-minute change</span><span id="m3" class="value">—</span></div><div class="row"><span>5-minute change</span><span id="m5" class="value">—</span></div><div class="row"><span>Alignment</span><span id="alignment" class="value">—</span></div><div class="row"><span>1-minute momentum change</span><span id="acceleration" class="value">—</span></div><hr><div class="section">Reversal stages</div><div class="row"><span>Trend stage</span><span id="stage" class="value">—</span></div><div class="row"><span>Reversal caution</span><span id="caution" class="value">—</span></div><p class="muted" id="stageexplain">Waiting for candle data.</p><hr><div class="section">Price levels &amp; breakouts</div><div class="row"><span>5m support (low)</span><span id="fiveLo" class="value">—</span></div><div class="row"><span>5m resistance (high)</span><span id="fiveHi" class="value">—</span></div><div class="row"><span>15m support (low)</span><span id="support" class="value">—</span></div><div class="row"><span>15m resistance (high)</span><span id="resistance" class="value">—</span></div><div class="row"><span>Distance to nearest 15m level</span><span id="distance" class="value">—</span></div><div class="row"><span>Breakout status</span><span id="breakout" class="value">—</span></div><p class="muted" id="levelnote">Levels are recent ranges, not predicted turning points.</p></div>
+<p class="muted" id="datasource">Data source: checking…</p>
+<button id="refresh" type="button">Refresh now</button><p class="muted" id="updated">No data yet</p><p id="error" role="status"></p>
+<small>Data: Coinbase Exchange BTC-USD 1-minute OHLC candles, with Kraken XBT/USD 1-minute OHLC fallback. Different exchanges may have different prices. Uses only completed candles; newest closed candle must be ≤90 seconds old, with no gaps in the last 21 minutes. Reversal and strength labels are unvalidated heuristics, not measured reversal probabilities. A technical “confirmed” reversal can fail. BTC Coinbase prices may differ from Kalshi's settlement reference. iPhone may pause updates in the background.</small>
+<script>
+'use strict';
+const $=id=>document.getElementById(id),money=x=>'$'+x.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),pct=x=>(x>=0?'+':'')+x.toFixed(3)+'%';
+const fields=['price','strength','m1','m3','m5','alignment','acceleration','stage','caution','fiveLo','fiveHi','support','resistance','distance','breakout'];let busy=false;
+function fail(message){$('status').textContent='DATA UNAVAILABLE';$('signal').textContent='WAIT';$('signal').className='signal wait';$('readiness').textContent='WAIT';$('readiness').className='value wait';$('scalpreason').textContent='No entry setup: data missing or stale.';$('reason').textContent='No valid momentum classification.';$('stageexplain').textContent='Reversal assessment unavailable.';$('levelnote').textContent='Levels unavailable.';$('strengthbar').style.width='0%';for(const id of fields)$(id).textContent='—';$('datasource').textContent='Data source: unavailable';$('error').textContent=String(message);$('updated').textContent='Last attempt '+new Date().toLocaleTimeString()}
+function analyze(bars,now){
+  const last=bars.at(-1),age=now-(last.t+60);if(age<0||age>90)throw Error('Stale 1-minute data: latest candle closed '+age+'s ago (limit 90s).');
+  const tail=bars.slice(-21);if(tail.length<21)throw Error('Need 21 consecutive completed candles.');for(let i=1;i<tail.length;i++)if(tail[i].t-tail[i-1].t!==60)throw Error('Missing 1-minute candles; waiting for complete series.');
+  const n=tail.length-1,C=i=>tail[n-i].close,change=k=>(C(0)/C(k)-1)*100;
+  const a=change(1),b=change(3),c=change(5),previous1=(C(1)/C(2)-1)*100,previous3=(C(1)/C(4)-1)*100;
+  const last15=tail.slice(-15),last5=tail.slice(-5),prior5=tail.slice(-6,-1),range=arr=>({low:Math.min(...arr.map(v=>v.low)),high:Math.max(...arr.map(v=>v.high))});
+  const r15=range(last15),r5=range(last5),prior=range(prior5),current=C(0);
+  if([r15,r5,prior].some(r=>!Number.isFinite(r.low)||!Number.isFinite(r.high)||r.low>r.high))throw Error('Invalid high/low price range.');
+  const aligned=a>0&&b>0&&c>0?'UP':a<0&&b<0&&c<0?'DOWN':'MIXED';
+  const momentumPct=Math.abs(c),volatility=Math.sqrt(tail.slice(-16).slice(1).reduce((s,v,i,arr)=>{const prev=tail[tail.length-16+i];const ret=(v.close/prev.close-1)*100;return s+ret*ret},0)/15);
+  const strength=Math.min(10,Math.round(10*momentumPct/Math.max(0.04,volatility*2.5)));
+  const divergence=a*b<0,near=Math.min(Math.abs(current-r15.low),Math.abs(r15.high-current)),nearExtreme=near/current*100<0.045;
+  const shortLow=prior.low,shortHigh=prior.high;
+  const earlyBear=b>0&&a<0,earlyBull=b<0&&a>0;
+  // A confirmed structure break requires a 3m direction flip plus a completed close outside the preceding 5-candle range.
+  const confirmedBear=previous3>=0&&b<0&&current<shortLow;
+  const confirmedBull=previous3<=0&&b>0&&current>shortHigh;
+  let stage='TREND CONTINUING',stageText='Short-term direction is consistent, but continuation is not guaranteed.';
+  if(confirmedBear){stage='BEARISH REVERSAL CONFIRMED';stageText='3m momentum flipped negative and a completed candle closed below the preceding 5-minute low.'}
+  else if(confirmedBull){stage='BULLISH REVERSAL CONFIRMED';stageText='3m momentum flipped positive and a completed candle closed above the preceding 5-minute high.'}
+  else if(earlyBear){stage='EARLY BEARISH WARNING';stageText='3m momentum is positive, but the latest 1m move is negative; this may be a pullback.'}
+  else if(earlyBull){stage='EARLY BULLISH WARNING';stageText='3m momentum is negative, but the latest 1m move is positive; this may be a bounce.'}
+  else if(aligned==='MIXED'){stage='NO CLEAR TREND';stageText='Momentum timeframes disagree; no confirmed directional setup.'}
+  const caution=(divergence||confirmedBear||confirmedBull)?'HIGH':nearExtreme?'HIGH (near range edge)':strength<4?'MODERATE (weak)':'LOW';
+  const breakout=current>prior.high?'CLOSED ABOVE PRIOR 5m HIGH':current<prior.low?'CLOSED BELOW PRIOR 5m LOW':'INSIDE PRIOR 5m RANGE';
+  const acceleration=a>0&&previous1>0?(a>previous1?'UP STRENGTHENING':'UP WEAKENING'):a<0&&previous1<0?(a<previous1?'DOWN STRENGTHENING':'DOWN WEAKENING'):a>0?'TURNED POSITIVE':a<0?'TURNED NEGATIVE':'FLAT';
+  // Readiness is an informational BTC-only filter; no contract data is used.
+  const cautionHigh=caution.startsWith('HIGH'),signal=aligned!=='MIXED'&&strength>=4&&!cautionHigh?aligned:'WAIT';
+  $('price').textContent=money(current);$('m1').textContent=pct(a);$('m3').textContent=pct(b);$('m5').textContent=pct(c);$('alignment').textContent=aligned;$('acceleration').textContent=acceleration;$('strength').textContent=strength+'/10';$('strengthbar').style.width=strength*10+'%';$('stage').textContent=stage;$('stageexplain').textContent=stageText;$('caution').textContent=caution;
+  $('fiveLo').textContent=money(r5.low);$('fiveHi').textContent=money(r5.high);$('support').textContent=money(r15.low);$('resistance').textContent=money(r15.high);$('distance').textContent=money(near)+' ('+(near/current*100).toFixed(3)+'%)';$('breakout').textContent=breakout;
+  $('levelnote').textContent='Prior 5m breakout boundary: '+money(prior.low)+' – '+money(prior.high)+'. Support/resistance are historical ranges, not guaranteed reversal points.';
+  $('signal').textContent=signal;$('signal').className='signal '+(signal==='UP'?'up':signal==='DOWN'?'down':'wait');$('readiness').textContent=signal==='WAIT'?'WAIT':'WATCH '+signal;$('readiness').className='value '+(signal==='UP'?'up':signal==='DOWN'?'down':'wait');
+  $('reason').textContent=signal==='WAIT'?'No clear aligned trend with acceptable caution.':'BTC momentum aligns '+signal.toLowerCase()+'; this is not a Kalshi win probability.';
+  $('scalpreason').textContent=signal==='WAIT'?'Avoid new momentum entries until signals improve.':'Momentum-only watchlist: check Kalshi strike, quote, time remaining, fees and spread before considering any paper entry.';
+  $('status').textContent='FRESH CANDLES';$('error').textContent='';$('updated').textContent='Checked '+new Date().toLocaleTimeString()+' · latest candle closed '+new Date((last.t+60)*1000).toLocaleTimeString()+' · '+age+'s old';
+}
+// Both providers are validated independently. Never combine candles from different exchanges.
+function parseCoinbase(raw,now){
+ if(!Array.isArray(raw))throw Error('Coinbase returned unexpected data');
+ return raw.filter(c=>Array.isArray(c)&&c.length>=6).map(c=>({t:Number(c[0]),low:Number(c[1]),high:Number(c[2]),open:Number(c[3]),close:Number(c[4]),volume:Number(c[5])})).filter(c=>validBar(c,now)).sort((a,b)=>a.t-b.t);
+}
+function parseKraken(raw,now){
+ if(!raw||raw.error?.length)throw Error('Kraken: '+(raw?.error?.join(', ')||'unexpected response'));
+ const result=raw.result||{},key=Object.keys(result).find(k=>k!=='last');
+ if(!key||!Array.isArray(result[key]))throw Error('Kraken returned no OHLC candles');
+ // Kraken OHLC format: [time,open,high,low,close,vwap,volume,count]
+ return result[key].map(c=>({t:Number(c[0]),open:Number(c[1]),high:Number(c[2]),low:Number(c[3]),close:Number(c[4]),volume:Number(c[6])})).filter(c=>validBar(c,now)).sort((a,b)=>a.t-b.t);
+}
+function validBar(c,now){return Object.values(c).every(Number.isFinite)&&c.t+60<=now&&c.t>0&&c.low>0&&c.high>=c.low&&c.close>=c.low&&c.close<=c.high&&c.open>=c.low&&c.open<=c.high}
+async function getJSON(url){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8500);try{const response=await fetch(url,{signal:controller.signal,cache:'no-store',headers:{Accept:'application/json'}});if(!response.ok)throw Error('HTTP '+response.status);return await response.json()}finally{clearTimeout(timer)}}
+async function refresh(){if(busy)return;busy=true;$('status').textContent='Updating…';const now=Math.floor(Date.now()/1000);let errors=[];
+ const sources=[
+  {name:'Coinbase Exchange BTC/USD',url:'https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=60',parse:parseCoinbase},
+  {name:'Kraken XBT/USD (fallback)',url:'https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1',parse:parseKraken}
+ ];
+ try{
+  let worked=false;
+  for(const source of sources){
+   try{const raw=await getJSON(source.url);const bars=source.parse(raw,Math.floor(Date.now()/1000));
+    // analyze() validates freshness and a gap-free 21-candle sequence.
+    analyze(bars,Math.floor(Date.now()/1000));
+    $('datasource').textContent='Data source: '+source.name+' · verified completed candles';worked=true;break;
+   }catch(err){errors.push(source.name+': '+(err.name==='AbortError'?'request timed out':err.message));}
+  }
+  if(!worked)throw Error('No verified fresh candle series. '+errors.join(' | '));
+ }catch(err){fail(err.message||'Network error')}finally{busy=false}
+}
+$('refresh').addEventListener('click',refresh);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});refresh();setInterval(()=>{if(!document.hidden)refresh()},15000);
+</script></body></html>
